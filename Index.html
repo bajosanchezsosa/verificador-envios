@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Verificador de Zona de Entrega</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input[type="text"] {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 15px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            width: 100%;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        #result {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 4px;
+            display: none;
+        }
+        .success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .error {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .warning {
+            background-color: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeeba;
+        }
+        .logo {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        .logo img {
+            max-width: 150px;
+        }
+        #map {
+            height: 300px;
+            width: 100%;
+            margin: 20px 0;
+            display: none;
+        }
+        .loading {
+            text-align: center;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="logo">
+        <img src="/api/placeholder/150/150" alt="Logo de tu emprendimiento">
+    </div>
+    
+    <h1>¿Llegamos a tu zona?</h1>
+    
+    <div class="form-group">
+        <label for="address">Tu dirección:</label>
+        <input type="text" id="address" placeholder="Ej: Av. Corrientes 1234, Buenos Aires">
+    </div>
+    
+    <div class="form-group">
+        <button onclick="checkDelivery()">Verificar disponibilidad</button>
+    </div>
+    
+    <div class="loading" id="loading">
+        Verificando dirección, por favor espera...
+    </div>
+    
+    <div id="map"></div>
+    <div id="result"></div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+    <script>
+        // Configuración: Establece aquí las coordenadas de tu ubicación central
+        // y la distancia máxima en metros (25 cuadras ≈ 2500 metros, ajusta según tu necesidad)
+        
+        // IMPORTANTE: Reemplaza estas coordenadas con las de tu ubicación real
+        const BASE_LAT = -34.603722; // Ejemplo para Buenos Aires (Obelisco)
+        const BASE_LNG = -58.381592;
+        const MAX_DISTANCE = 2500; // 25 cuadras ≈ 2500 metros (ajusta según el tamaño de las cuadras en tu ciudad)
+        
+        let map = null;
+        
+        // Función para calcular la distancia entre dos puntos geográficos
+        function calculateDistance(lat1, lon1, lat2, lon2) {
+            const R = 6371000; // Radio de la Tierra en metros
+            const dLat = toRad(lat2 - lat1);
+            const dLon = toRad(lon2 - lon1);
+            
+            const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+                    Math.sin(dLon/2) * Math.sin(dLon/2);
+            
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+            const distance = R * c;
+            
+            return distance; // Distancia en metros
+        }
+        
+        function toRad(degrees) {
+            return degrees * (Math.PI / 180);
+        }
+        
+        function showMap(baseLat, baseLng, customerLat, customerLng, inRange) {
+            // Asegurarse de que el div del mapa esté visible
+            document.getElementById('map').style.display = 'block';
+            
+            // Si ya existe un mapa, lo eliminamos antes de crear uno nuevo
+            if (map) {
+                map.remove();
+            }
+            
+            // Crear el mapa
+            map = L.map('map').setView([(baseLat + customerLat) / 2, (baseLng + customerLng) / 2], 13);
+            
+            // Agregar la capa de OpenStreetMap
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+            }).addTo(map);
+            
+            // Agregar marcador para tu ubicación
+            const baseMarker = L.marker([baseLat, baseLng]).addTo(map);
+            baseMarker.bindPopup("Tu negocio").openPopup();
+            
+            // Agregar marcador para la ubicación del cliente
+            const customerMarker = L.marker([customerLat, customerLng]).addTo(map);
+            customerMarker.bindPopup("Cliente").openPopup();
+            
+            // Dibujar un círculo que represente tu radio de entrega
+            const circle = L.circle([baseLat, baseLng], {
+                color: 'blue',
+                fillColor: '#30f',
+                fillOpacity: 0.1,
+                radius: MAX_DISTANCE
+            }).addTo(map);
+            
+            // Dibujar una línea entre los dos puntos
+            const line = L.polyline([[baseLat, baseLng], [customerLat, customerLng]], {
+                color: inRange ? 'green' : 'red',
+                weight: 3
+            }).addTo(map);
+            
+            // Ajustar el zoom para que se vean ambos marcadores
+            const bounds = L.latLngBounds([[baseLat, baseLng], [customerLat, customerLng]]);
+            map.fitBounds(bounds.pad(0.1));
+        }
+        
+        async function checkDelivery() {
+            const addressInput = document.getElementById('address').value;
+            const resultDiv = document.getElementById('result');
+            const loadingDiv = document.getElementById('loading');
+            
+            if (!addressInput) {
+                alert('Por favor ingresa una dirección');
+                return;
+            }
+            
+            // Mostrar el indicador de carga
+            loadingDiv.style.display = 'block';
+            resultDiv.style.display = 'none';
+            
+            try {
+                // Geocodificar la dirección usando Nominatim (OpenStreetMap)
+                const geocodingUrl = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(addressInput)}`;
+                
+                const response = await fetch(geocodingUrl);
+                const data = await response.json();
+                
+                if (data.length === 0) {
+                    resultDiv.className = 'warning';
+                    resultDiv.innerHTML = '<strong>No pudimos encontrar esa dirección.</strong> Por favor verifica que esté correctamente escrita e incluye la ciudad.';
+                    resultDiv.style.display = 'block';
+                    loadingDiv.style.display = 'none';
+                    return;
+                }
+                
+                // Tomar el primer resultado
+                const location = data[0];
+                const lat = parseFloat(location.lat);
+                const lng = parseFloat(location.lon);
+                
+                // Calcular la distancia entre tu ubicación y la dirección del cliente
+                const distance = calculateDistance(BASE_LAT, BASE_LNG, lat, lng);
+                const inRange = distance <= MAX_DISTANCE;
+                
+                // Mostrar el mapa con ambas ubicaciones
+                showMap(BASE_LAT, BASE_LNG, lat, lng, inRange);
+                
+                // Mostrar el resultado
+                resultDiv.style.display = 'block';
+                
+                if (inRange) {
+                    resultDiv.className = 'success';
+                    resultDiv.innerHTML = `
+                        <strong>¡Buenas noticias!</strong> Tu dirección está dentro de nuestra zona de entrega 
+                        (a ${Math.round(distance/100)/10} km de nuestra ubicación). 
+                        Puedes realizar tu pedido por DM en Instagram.
+                    `;
+                } else {
+                    resultDiv.className = 'error';
+                    resultDiv.innerHTML = `
+                        <strong>Lo sentimos.</strong> Tu dirección está fuera de nuestra zona de entrega 
+                        (a ${Math.round(distance/100)/10} km de nuestra ubicación, 
+                        nuestro límite es ${MAX_DISTANCE/1000} km).
+                    `;
+                }
+            } catch (error) {
+                console.error("Error:", error);
+                resultDiv.className = 'error';
+                resultDiv.innerHTML = '<strong>Ocurrió un error al verificar la dirección.</strong> Por favor intenta nuevamente más tarde.';
+                resultDiv.style.display = 'block';
+            } finally {
+                loadingDiv.style.display = 'none';
+            }
+        }
+    </script>
+</body>
+</html>
